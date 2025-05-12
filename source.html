@@ -1,0 +1,690 @@
+<!DOCTYPE html>
+
+    <meta charsetutf-8"="">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>Rhythm Pulse</title>
+    <script src="https://cdnjs.cloudflare.com/ajax/libs/p5.js/1.4.0/p5.js"></script>
+    <script src="https://cdnjs.cloudflare.com/ajax/libs/p5.js/1.4.0/addons/p5.sound.min.js"></script>
+    <style>
+        body {
+            margin: 0;
+            padding: 0;
+            overflow: hidden;
+            background-color: #121212;
+            font-family: 'Arial', sans-serif;
+            touch-action: manipulation;
+        }
+        #start-screen {
+            position: absolute;
+            top: 0;
+            left: 0;
+            width: 100%;
+            height: 100%;
+            display: flex;
+            flex-direction: column;
+            justify-content: center;
+            align-items: center;
+            background-color: rgba(0, 0, 0, 0.8);
+            color: white;
+            z-index: 100;
+        }
+        #start-screen.hidden {
+            display: none;
+        }
+        button {
+            background: linear-gradient(135deg, #6e45e2, #88d3ce);
+            border: none;
+            color: white;
+            padding: 15px 32px;
+            text-align: center;
+            text-decoration: none;
+            display: inline-block;
+            font-size: 16px;
+            margin: 10px 2px;
+            cursor: pointer;
+            border-radius: 25px;
+            box-shadow: 0 4px 8px rgba(0, 0, 0, 0.2);
+            transition: all 0.3s;
+        }
+        button:hover {
+            transform: scale(1.05);
+            box-shadow: 0 6px 12px rgba(0, 0, 0, 0.3);
+        }
+        h1 {
+            font-size: 3em;
+            margin-bottom: 20px;
+            background: linear-gradient(90deg, #ff8a00, #e52e71);
+            -webkit-background-clip: text;
+            -webkit-text-fill-color: transparent;
+            text-shadow: 0 2px 4px rgba(0, 0, 0, 0.3);
+        }
+        #file-input {
+            display: none;
+        }
+        #file-label {
+            display: inline-block;
+            padding: 15px 32px;
+            background: linear-gradient(135deg, #e52e71, #ff8a00);
+            color: white;
+            border-radius: 25px;
+            cursor: pointer;
+            margin: 10px 0;
+            box-shadow: 0 4px 8px rgba(0, 0, 0, 0.2);
+        }
+        #game-ui {
+            position: absolute;
+            top: 20px;
+            left: 20px;
+            color: white;
+            font-size: 1.2em;
+            z-index: 10;
+            pointer-events: none;
+        }
+        #pause-screen {
+            position: absolute;
+            top: 0;
+            left: 0;
+            width: 100%;
+            height: 100%;
+            display: none;
+            flex-direction: column;
+            justify-content: center;
+            align-items: center;
+            background-color: rgba(0, 0, 0, 0.7);
+            color: white;
+            z-index: 50;
+        }
+        #pause-screen h2 {
+            font-size: 3em;
+            margin-bottom: 20px;
+            color: #ff8a00;
+        }
+    </style>
+
+<base target="_self">
+
+
+    <div id="start-screen">
+        <h1>Rhythm Pulse</h1>
+        <input type="file" id="file-input" accept="audio/*">
+        <label for="file-input" id="file-label">Choose Music</label>
+        <button id="start-button" disabled="">Start Game</button>
+        <p id="loading-text" style="display:none;">Analyzing track...</p>
+    </div>
+    <div id="game-ui">
+        <div>Score: <span id="score-display">0</span></div>
+        <div>Combo: <span id="combo-display">0</span>x</div>
+        <div>Accuracy: <span id="accuracy-display">100</span>%</div>
+    </div>
+    <div id="pause-screen">
+        <h2>PAUSED</h2>
+        <p>Press ESC to resume</p>
+    </div>
+
+    <script>
+        let gameState = 'start'; // start, loading, playing, paused, gameover
+        let audioInitialized = false;
+        let audioLoaded = false;
+        let song;
+        let fft;
+        let peaks = [];
+        let beatTimes = [];
+        let nextBeatIndex = 0;
+        let lastBeatTime = 0;
+        let beatInterval = 0;
+        let targetRadius = 50;
+        let targets = [];
+        let activeTargets = [];
+        let score = 0;
+        let combo = 0;
+        let maxCombo = 0;
+        let hits = 0;
+        let totalHits = 0;
+        let accuracy = 100;
+        let lastHitTime = 0;
+        let hitEffects = [];
+        let spectrumBars = [];
+        let bgColor = 0;
+        let bgHue = 0;
+        let bgHueDirection = 1;
+        let canvas;
+        let startButton;
+        let fileInput;
+        let fileLabel;
+        let loadingText;
+        let scoreDisplay;
+        let comboDisplay;
+        let accuracyDisplay;
+        let pauseScreen;
+
+        function preload() {
+            // No preloading - we'll load audio after user interaction
+        }
+
+        function setup() {
+            canvas = createCanvas(windowWidth, windowHeight);
+            canvas.style('display', 'block');
+            
+            // UI elements
+            startButton = select('#start-button');
+            fileInput = select('#file-input');
+            fileLabel = select('#file-label');
+            loadingText = select('#loading-text');
+            scoreDisplay = select('#score-display');
+            comboDisplay = select('#combo-display');
+            accuracyDisplay = select('#accuracy-display');
+            pauseScreen = select('#pause-screen');
+
+            // Event listeners
+            startButton.mousePressed(startGame);
+            fileInput.changed(handleFileSelect);
+
+            // Initialize FFT for audio analysis
+            fft = new p5.FFT(0.8, 64);
+            
+            // Setup spectrum bars
+            for (let i = 0; i < 32; i++) {
+                spectrumBars.push({
+                    x: i * (width / 32),
+                    width: (width / 32) - 2,
+                    height: 0,
+                    targetHeight: 0
+                });
+            }
+
+            colorMode(HSB, 360, 100, 100, 1);
+            noStroke();
+            textAlign(CENTER, CENTER);
+        }
+
+        function windowResized() {
+            resizeCanvas(windowWidth, windowHeight);
+            
+            // Update spectrum bars positions
+            for (let i = 0; i < spectrumBars.length; i++) {
+                spectrumBars[i].x = i * (width / spectrumBars.length);
+                spectrumBars[i].width = (width / spectrumBars.length) - 2;
+            }
+        }
+
+        function handleFileSelect() {
+            if (fileInput.elt.files.length > 0) {
+                loadingText.style('display', 'block');
+                fileLabel.html('File selected');
+                startButton.attribute('disabled', true);
+                
+                const file = fileInput.elt.files[0];
+                const fileURL = URL.createObjectURL(file);
+                
+                song = loadSound(fileURL, () => {
+                    loadingText.style('display', 'none');
+                    startButton.removeAttribute('disabled');
+                    audioLoaded = true;
+                    analyzeTrack();
+                }, (err) => {
+                    console.error('Error loading audio:', err);
+                    loadingText.html('Error loading file. Try another.');
+                });
+            }
+        }
+
+        function analyzeTrack() {
+            // Simple beat detection (for demo purposes)
+            // In a real implementation, you'd use more sophisticated analysis
+            const duration = song.duration();
+            beatInterval = 60 / 120 * 1000; // Default 120 BPM
+            
+            // Generate beat times
+            for (let t = 0; t < duration * 1000; t += beatInterval) {
+                beatTimes.push(t);
+            }
+            
+            // Create targets based on beat times
+            createTargets();
+        }
+
+        function createTargets() {
+            targets = [];
+            const padding = targetRadius * 2;
+            
+            for (let i = 0; i < beatTimes.length; i++) {
+                const x = random(padding, width - padding);
+                const y = random(padding, height - padding);
+                const size = random(targetRadius * 0.8, targetRadius * 1.2);
+                const hue = random(0, 360);
+                
+                targets.push({
+                    beatTime: beatTimes[i],
+                    x: x,
+                    y: y,
+                    size: size,
+                    hue: hue,
+                    hit: false,
+                    hitTime: 0,
+                    approachStart: beatTimes[i] - 1000, // 1 second approach
+                    approachEnd: beatTimes[i],
+                    spawnTime: beatTimes[i] - 1500 // Spawn 1.5 seconds before hit
+                });
+            }
+        }
+
+        function startGame() {
+            if (!audioInitialized) {
+                getAudioContext().resume().then(() => {
+                    audioInitialized = true;
+                    actuallyStartGame();
+                });
+            } else {
+                actuallyStartGame();
+            }
+        }
+
+        function actuallyStartGame() {
+            if (audioLoaded) {
+                gameState = 'playing';
+                select('#start-screen').addClass('hidden');
+                song.play();
+                lastBeatTime = millis();
+            }
+        }
+
+        function draw() {
+            background(bgColor);
+            
+            if (gameState === 'playing') {
+                updateGame();
+                drawGame();
+            } else if (gameState === 'paused') {
+                drawGame(); // Draw frozen game state
+            }
+        }
+
+        function updateGame() {
+            const currentTime = song.currentTime() * 1000;
+            const currentMillis = millis();
+            
+            // Update background color
+            updateBackground();
+            
+            // Update audio analysis
+            updateAudioAnalysis();
+            
+            // Spawn and update targets
+            updateTargets(currentTime);
+            
+            // Update hit effects
+            updateHitEffects();
+        }
+
+        function updateBackground() {
+            bgHue += bgHueDirection * 0.2;
+            if (bgHue > 360) bgHue = 0;
+            if (bgHue < 0) bgHue = 360;
+            
+            // Background pulses with bass energy
+            const spectrum = fft.analyze();
+            const bass = fft.getEnergy("bass");
+            const pulse = map(bass, 0, 255, 5, 15);
+            
+            bgColor = color(bgHue, 80, 10 + pulse, 1);
+        }
+
+        function updateAudioAnalysis() {
+            const spectrum = fft.analyze();
+            
+            // Update spectrum bars
+            for (let i = 0; i < spectrumBars.length; i++) {
+                const energy = spectrum[i];
+                spectrumBars[i].targetHeight = map(energy, 0, 255, 0, height * 0.4);
+                spectrumBars[i].height = lerp(spectrumBars[i].height, spectrumBars[i].targetHeight, 0.2);
+            }
+        }
+
+        function updateTargets(currentTime) {
+            // Remove old targets
+            activeTargets = activeTargets.filter(target => {
+                return !target.hit || currentTime - target.hitTime < 500;
+            });
+            
+            // Add new targets that should be visible
+            for (let i = 0; i < targets.length; i++) {
+                const target = targets[i];
+                if (!target.hit && currentTime >= target.spawnTime && currentTime <= target.approachEnd + 500) {
+                    if (!activeTargets.includes(target)) {
+                        activeTargets.push(target);
+                    }
+                }
+            }
+            
+            // Update target states
+            for (let i = 0; i < activeTargets.length; i++) {
+                const target = activeTargets[i];
+                
+                if (!target.hit && currentTime >= target.beatTime - 50 && currentTime <= target.beatTime + 50) {
+                    // Auto-miss if not hit in time
+                    if (!target.hit) {
+                        registerHit(null, target);
+                    }
+                }
+            }
+        }
+
+        function updateHitEffects() {
+            for (let i = hitEffects.length - 1; i >= 0; i--) {
+                hitEffects[i].update();
+                if (hitEffects[i].isDone) {
+                    hitEffects.splice(i, 1);
+                }
+            }
+        }
+
+        function drawGame() {
+            // Draw spectrum analyzer
+            drawSpectrum();
+            
+            // Draw targets
+            drawTargets();
+            
+            // Draw hit effects
+            drawHitEffects();
+            
+            // Draw UI
+            drawUI();
+        }
+
+        function drawSpectrum() {
+            for (let i = 0; i < spectrumBars.length; i++) {
+                const bar = spectrumBars[i];
+                const hue = map(i, 0, spectrumBars.length, 180, 360);
+                fill(hue, 80, 80, 0.7);
+                rect(bar.x, height - bar.height, bar.width, bar.height);
+            }
+        }
+
+        function drawTargets() {
+            const currentTime = song.currentTime() * 1000;
+            
+            for (let i = 0; i < activeTargets.length; i++) {
+                const target = activeTargets[i];
+                
+                if (target.hit) {
+                    // Draw hit target (fading out)
+                    const fade = map(currentTime - target.hitTime, 0, 500, 1, 0);
+                    fill(target.hue, 100, 100, fade * 0.5);
+                    ellipse(target.x, target.y, target.size * 2 * fade);
+                } else {
+                    // Draw approaching target
+                    const progress = map(currentTime, target.approachStart, target.approachEnd, 0, 1);
+                    const size = map(progress, 0, 1, target.size * 3, target.size);
+                    
+                    // Outer circle (approach)
+                    fill(target.hue, 50, 100, 0.3);
+                    ellipse(target.x, target.y, size * 2);
+                    
+                    // Inner circle (target)
+                    fill(target.hue, 100, 100);
+                    ellipse(target.x, target.y, target.size * 2);
+                    
+                    // Beat timing indicator
+                    const beatProgress = map(currentTime, target.beatTime - 100, target.beatTime + 100, 0, 1);
+                    if (beatProgress > 0 && beatProgress < 1) {
+                        const beatSize = map(abs(beatProgress - 0.5) * 2, 0, 1, 0, target.size * 0.3);
+                        fill(360, 100, 100, 0.8);
+                        ellipse(target.x, target.y, beatSize);
+                    }
+                }
+            }
+        }
+
+        function drawHitEffects() {
+            for (let i = 0; i < hitEffects.length; i++) {
+                hitEffects[i].draw();
+            }
+        }
+
+        function drawUI() {
+            // Score and combo are displayed in HTML elements
+            scoreDisplay.html(score);
+            comboDisplay.html(combo);
+            accuracyDisplay.html(nf(accuracy, 2, 1));
+            
+            // Draw combo glow effect
+            if (combo > 5) {
+                const glowSize = map(min(combo, 50), 5, 50, 0, 50);
+                const alpha = map(min(combo, 50), 5, 50, 0, 0.2);
+                fill(60, 100, 100, alpha);
+                for (let i = 0; i < 3; i++) {
+                    ellipse(width/2, height/2, width + glowSize * i);
+                }
+            }
+        }
+
+        function mousePressed() {
+            if (gameState === 'playing') {
+                checkHit(mouseX, mouseY);
+            }
+        }
+
+        function touchStarted() {
+            if (gameState === 'playing' && touches.length > 0) {
+                checkHit(touches[0].x, touches[0].y);
+            }
+            return false; // Prevent default touch behavior
+        }
+
+        function checkHit(x, y) {
+            const currentTime = song.currentTime() * 1000;
+            let hitRegistered = false;
+            
+            for (let i = 0; i < activeTargets.length; i++) {
+                const target = activeTargets[i];
+                
+                if (!target.hit) {
+                    const distToTarget = dist(x, y, target.x, target.y);
+                    const timeDiff = abs(currentTime - target.beatTime);
+                    
+                    if (distToTarget < target.size && timeDiff < 200) {
+                        registerHit(timeDiff, target);
+                        hitRegistered = true;
+                        break; // Only register one hit per tap
+                    }
+                }
+            }
+            
+            if (!hitRegistered) {
+                // Miss penalty
+                combo = 0;
+                createMissEffect(x, y);
+            }
+        }
+
+        function registerHit(timeDiff, target) {
+            target.hit = true;
+            target.hitTime = song.currentTime() * 1000;
+            
+            let hitScore = 0;
+            let hitText = '';
+            
+            if (timeDiff < 50) {
+                hitScore = 300;
+                hitText = 'PERFECT';
+            } else if (timeDiff < 100) {
+                hitScore = 200;
+                hitText = 'GREAT';
+            } else if (timeDiff < 150) {
+                hitScore = 100;
+                hitText = 'GOOD';
+            } else {
+                hitScore = 50;
+                hitText = 'POOR';
+                combo = 0;
+            }
+            
+            score += hitScore * (1 + combo * 0.01);
+            combo++;
+            maxCombo = max(maxCombo, combo);
+            hits++;
+            totalHits++;
+            
+            // Update accuracy
+            accuracy = (hits / totalHits) * 100;
+            
+            // Create hit effect
+            createHitEffect(target.x, target.y, target.size, target.hue, hitText);
+            
+            // Screen shake for perfect hits
+            if (hitScore === 300) {
+                applyScreenShake(5);
+            }
+        }
+
+        function createHitEffect(x, y, size, hue, text) {
+            hitEffects.push({
+                x: x,
+                y: y,
+                size: size,
+                hue: hue,
+                text: text,
+                particles: [],
+                life: 60,
+                isDone: false,
+                
+                init: function() {
+                    // Create particles
+                    for (let i = 0; i < 20; i++) {
+                        const angle = random(TWO_PI);
+                        const speed = random(1, 5);
+                        this.particles.push({
+                            x: this.x,
+                            y: this.y,
+                            vx: cos(angle) * speed,
+                            vy: sin(angle) * speed,
+                            size: random(5, 15),
+                            life: random(30, 60)
+                        });
+                    }
+                },
+                
+                update: function() {
+                    this.life--;
+                    if (this.life <= 0) {
+                        this.isDone = true;
+                    }
+                    
+                    // Update particles
+                    for (let i = 0; i < this.particles.length; i++) {
+                        const p = this.particles[i];
+                        p.x += p.vx;
+                        p.y += p.vy;
+                        p.life--;
+                        p.vy += 0.1; // Gravity
+                    }
+                },
+                
+                draw: function() {
+                    // Draw particles
+                    for (let i = 0; i < this.particles.length; i++) {
+                        const p = this.particles[i];
+                        const alpha = map(p.life, 0, 60, 0, 1);
+                        fill(this.hue, 100, 100, alpha);
+                        noStroke();
+                        ellipse(p.x, p.y, p.size * alpha);
+                    }
+                    
+                    // // Draw hit text
+                    // if (this.life > 30) {
+                    //     const scale = map(this.life, 60, 30, 0, 1);
+                    //     textSize(30 * scale);
+                    //     fill(360, 0, 100);
+                    //     text(this.text, this.x, this.y - 50 * scale);
+                    // }
+                }
+            });
+            
+            hitEffects[hitEffects.length - 1].init();
+        }
+
+        function createMissEffect(x, y) {
+            hitEffects.push({
+                x: x,
+                y: y,
+                size: 30,
+                life: 30,
+                isDone: false,
+                
+                update: function() {
+                    this.life--;
+                    if (this.life <= 0) {
+                        this.isDone = true;
+                    }
+                },
+                
+                draw: function() {
+                    const alpha = map(this.life, 0, 30, 0, 1);
+                    fill(0, 100, 100, alpha);
+                    noStroke();
+                    ellipse(this.x, this.y, this.size * alpha);
+                    
+                    textSize(20 * alpha);
+                    fill(0, 100, 100);
+                    text('MISS', this.x, this.y - 30 * alpha);
+                }
+            });
+        }
+
+        function applyScreenShake(amount) {
+            // Simple screen shake effect
+            translate(random(-amount, amount), random(-amount, amount));
+        }
+
+        function keyPressed() {
+            if (keyCode === ESCAPE) {
+                if (gameState === 'playing') {
+                    pauseGame();
+                } else if (gameState === 'paused') {
+                    resumeGame();
+                }
+                return false; // Prevent default ESC behavior
+            } else if (key === ' ') {
+                if (gameState === 'start') {
+                    startGame();
+                }
+            }
+        }
+
+        function pauseGame() {
+            gameState = 'paused';
+            song.pause();
+            pauseScreen.style('display', 'flex');
+        }
+
+        function resumeGame() {
+            gameState = 'playing';
+            song.play();
+            pauseScreen.style('display', 'none');
+        }
+
+        function resetGame() {
+            score = 0;
+            combo = 0;
+            hits = 0;
+            totalHits = 0;
+            accuracy = 100;
+            activeTargets = [];
+            hitEffects = [];
+            
+            if (song) {
+                song.stop();
+            }
+            
+            gameState = 'start';
+            select('#start-screen').removeClass('hidden');
+            pauseScreen.style('display', 'none');
+        }
+    </script>
+
+              
+          
+                
+          
+              
